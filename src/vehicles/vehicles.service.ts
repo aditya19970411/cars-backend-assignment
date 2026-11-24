@@ -33,7 +33,7 @@ export class VehiclesService {
     if (search && search.trim()) {
       const searchTerm = `%${search.trim()}%`;
       queryBuilder.where(
-        'make.makeName LIKE :search OR make.makeId LIKE :search',
+        'make.makeName ILIKE :search OR make.makeId ILIKE :search',
         { search: searchTerm },
       );
     }

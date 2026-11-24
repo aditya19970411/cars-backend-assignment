@@ -38,7 +38,7 @@ lerna-debug.log*
 !.vscode/launch.json
 !.vscode/extensions.json
 
-# SQLite data files
+# Local data and legacy files
 data/
 *.sqlite
 *.sqlite3

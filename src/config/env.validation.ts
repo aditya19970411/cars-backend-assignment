@@ -5,7 +5,17 @@ export const envSchema = z.object({
     .enum(['development', 'production', 'test', 'staging'])
     .default('development'),
   PORT: z.coerce.number().int().positive().default(3000),
-  DATABASE_PATH: z.string().default('./data/vehicles.sqlite'),
+  DATABASE_HOST: z.string().default('localhost'),
+  DATABASE_PORT: z.coerce.number().int().positive().default(5432),
+  DATABASE_USER: z.string().default('postgres'),
+  DATABASE_PASSWORD: z.string().default('postgres'),
+  DATABASE_NAME: z.string().default('cars_db'),
+  DATABASE_SSL: z
+    .union([z.boolean(), z.string()])
+    .optional()
+    .transform((val) => val === true || val === 'true' || val === '1')
+    .default(false),
+  DATABASE_URL: z.string().optional(),
   LOG_LEVEL: z
     .enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent'])
     .default('info'),
@@ -19,6 +29,9 @@ export const envSchema = z.object({
     .string()
     .transform((val) => val === 'true' || val === '1')
     .default(false),
+  REDIS_HOST: z.string().default('127.0.0.1'),
+  REDIS_PORT: z.coerce.number().int().positive().default(6379),
+  REDIS_PASSWORD: z.string().optional(),
   EXTERNAL_API_TIMEOUT_MS: z.coerce.number().int().min(1000).default(15000),
   EXTERNAL_API_MAX_RETRIES: z.coerce.number().int().min(0).max(10).default(3),
   OBSERVE_APP_KEY: z.string().optional(),

@@ -1,16 +1,9 @@
 # ----------------------------------------------------
 # Stage 1: Build & Dependencies
 # ----------------------------------------------------
-FROM node:22-bookworm-slim AS builder
+FROM node:22-alpine AS builder
 
 WORKDIR /usr/src/app
-
-# Install native compilation dependencies for better-sqlite3
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    python3 \
-    make \
-    g++ \
-    && rm -rf /var/lib/apt/lists/*
 
 COPY package.json yarn.lock ./
 
@@ -26,17 +19,20 @@ RUN yarn install --production --ignore-scripts --prefer-offline
 # ----------------------------------------------------
 # Stage 2: Production Runtime
 # ----------------------------------------------------
-FROM node:22-bookworm-slim AS runner
+FROM node:22-alpine AS runner
 
 WORKDIR /usr/src/app
 
 ENV NODE_ENV=production \
     PORT=3000 \
-    DATABASE_PATH=/usr/src/app/data/vehicles.sqlite \
+    DATABASE_HOST=postgres \
+    DATABASE_PORT=5432 \
+    DATABASE_USER=postgres \
+    DATABASE_NAME=cars_db \
+    DATABASE_SSL=false \
     LOG_LEVEL=info
 
-# Create persistent data directory and assign ownership to node user
-RUN mkdir -p /usr/src/app/data && chown -R node:node /usr/src/app
+RUN chown -R node:node /usr/src/app
 
 COPY --chown=node:node --from=builder /usr/src/app/node_modules ./node_modules
 COPY --chown=node:node --from=builder /usr/src/app/dist ./dist

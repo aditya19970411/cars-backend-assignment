@@ -1,7 +1,8 @@
 import { Module } from '@nestjs/common';
-import { ConfigModule } from '@nestjs/config';
+import { ConfigModule, ConfigService } from '@nestjs/config';
 import { GraphQLModule } from '@nestjs/graphql';
 import { ApolloDriver, ApolloDriverConfig } from '@nestjs/apollo';
+import { BullModule } from '@nestjs/bullmq';
 import { createObserveModule } from '@nestjs/observe';
 import { validateEnv } from './config/env.validation';
 import { configuration } from './config/configuration';
@@ -27,8 +28,23 @@ export const { ObserveModule, ObserveInstrument } = createObserveModule();
     // Structured JSON Logger
     LoggerModule,
 
-    // Relational Persistent Datastore (SQLite / TypeORM)
+    // Relational Persistent Datastore (PostgreSQL / TypeORM)
     DatabaseModule,
+
+    // Asynchronous Queue Engine (BullMQ + Redis)
+    BullModule.forRootAsync({
+      imports: [ConfigModule],
+      inject: [ConfigService],
+      useFactory: (configService: ConfigService) => ({
+        connection: {
+          host: configService.get<string>('redis.host') || '127.0.0.1',
+          port: configService.get<number>('redis.port') || 6379,
+          password: configService.get<string>('redis.password') || undefined,
+          maxRetriesPerRequest: null,
+          enableReadyCheck: false,
+        },
+      }),
+    }),
 
     // GraphQL Engine (Apollo Driver, code-first schema generation)
     GraphQLModule.forRoot<ApolloDriverConfig>({

@@ -25,7 +25,7 @@ export interface IngestionJobPayload {
 @Processor('vehicle-ingestion', {
   concurrency: 1, // Enforce single ingestion execution at any time
   limiter: {
-    max: 10,       // Max 10 requests per second across all workers
+    max: 10, // Max 10 requests per second across all workers
     duration: 1000,
   },
 })

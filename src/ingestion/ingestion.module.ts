@@ -17,8 +17,8 @@ import { TransformationModule } from '../transformation/transformation.module';
       name: 'vehicle-ingestion',
       defaultJobOptions: {
         removeOnComplete: 100, // Retain last 100 completed jobs for audit telemetry
-        removeOnFail: 500,     // Retain last 500 failed jobs for diagnostics
-        attempts: 2,           // Retry once on transient network failures
+        removeOnFail: 500, // Retain last 500 failed jobs for diagnostics
+        attempts: 2, // Retry once on transient network failures
         backoff: {
           type: 'exponential',
           delay: 2000,

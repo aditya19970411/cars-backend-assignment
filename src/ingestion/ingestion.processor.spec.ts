@@ -35,7 +35,9 @@ describe('IngestionProcessor', () => {
       durationMs: 150,
     };
 
-    ingestionServiceMock.executeIngestionPipeline.mockResolvedValue(mockSummary);
+    ingestionServiceMock.executeIngestionPipeline.mockResolvedValue(
+      mockSummary,
+    );
 
     const mockJob = {
       id: 'job-1',

@@ -45,14 +45,14 @@ export class IngestionRecord {
     nullable: true,
     description: 'Timestamp when ingestion started',
   })
-  @Column({ type: 'datetime', nullable: true })
+  @Column({ type: 'timestamp', nullable: true })
   startedAt?: Date;
 
   @Field(() => Date, {
     nullable: true,
     description: 'Timestamp when ingestion completed',
   })
-  @Column({ type: 'datetime', nullable: true })
+  @Column({ type: 'timestamp', nullable: true })
   completedAt?: Date;
 
   @Field(() => String, {

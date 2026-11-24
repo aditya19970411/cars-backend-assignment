@@ -1,13 +1,15 @@
 import { jest } from '@jest/globals';
 import { Test } from '@nestjs/testing';
+import { getQueueToken } from '@nestjs/bullmq';
 import { AppModule } from '../src/app.module';
 import { IngestionService } from '../src/ingestion/ingestion.service';
+import { IngestionProcessor } from '../src/ingestion/ingestion.processor';
 import * as fs from 'fs';
 import * as path from 'path';
 
 describe('GraphQL Schema Generation', () => {
   it('should generate schema.gql on startup', async () => {
-    process.env.DATABASE_PATH = ':memory:';
+    process.env.NODE_ENV = 'test';
     process.env.SYNC_ON_STARTUP = 'false';
 
     const moduleRef = await Test.createTestingModule({
@@ -18,6 +20,17 @@ describe('GraphQL Schema Generation', () => {
         onApplicationBootstrap: jest.fn(),
         getLatestStatus: jest.fn(async () => ({})),
         runIngestion: jest.fn(),
+      })
+      .overrideProvider(IngestionProcessor)
+      .useValue({
+        process: jest.fn(),
+      })
+      .overrideProvider(getQueueToken('vehicle-ingestion'))
+      .useValue({
+        add: jest.fn(),
+        getActiveCount: jest.fn(async () => 0),
+        getWaitingCount: jest.fn(async () => 0),
+        close: jest.fn(async () => {}),
       })
       .compile();
 

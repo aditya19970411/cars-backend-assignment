@@ -1,6 +1,6 @@
 # Vehicle Data Ingestion & GraphQL Service
 
-A robust, enterprise-grade backend service built with **NestJS**, **TypeScript**, and **TypeORM** (SQLite) that ingests XML vehicle data from public US Department of Transportation (NHTSA) APIs, transforms the polymorphic XML data into a unified JSON structure, persists it to a relational datastore, and serves it through a typed, high-performance **GraphQL endpoint**.
+A robust, enterprise-grade backend service built with **NestJS**, **TypeScript**, and **TypeORM** (PostgreSQL) that ingests XML vehicle data from public US Department of Transportation (NHTSA) APIs, transforms the polymorphic XML data into a unified JSON structure, persists it to a relational datastore, and serves it through a typed, high-performance **GraphQL endpoint**.
 
 ---
 
@@ -42,14 +42,19 @@ flowchart TD
         subgraph IngestionLayer["Ingestion & Resilience Engine"]
             Client["NhtsaApiClient\n(Retry, Exponential Backoff, Jitter)"]
             Parser["XmlParserService\n(Defensive, Array Normalization)"]
+            BullQueue["BullMQ Ingestion Queue\n(Rate Limiter, Single Ingestion Concurrency)"]
             WorkerPool["Concurrent Ingestion Worker Pool\n(Configurable Concurrency & Rate Limiting)"]
+        end
+
+        subgraph QueueLayer["Queue Layer"]
+            Redis[(Redis Service / Docker)]
         end
 
         subgraph PersistenceLayer["Persistence Layer (TypeORM)"]
             MakeEntity["VehicleMake Entity"]
             TypeEntity["VehicleType Entity"]
             RecordEntity["IngestionRecord Entity"]
-            DB[(SQLite Persistent Datastore)]
+            DB[(PostgreSQL Persistent Datastore)]
         end
 
         subgraph PresentationLayer["Presentation Layer"]
@@ -61,6 +66,9 @@ flowchart TD
     GetAllMakes --> Client
     GetVehicleTypes --> Client
     Client --> Parser
+    GQLResolver --> BullQueue
+    BullQueue --> Redis
+    Redis --> WorkerPool
     Parser --> WorkerPool
     WorkerPool --> MakeEntity
     WorkerPool --> TypeEntity
@@ -79,7 +87,9 @@ flowchart TD
 - **NestJS v12 & Modern TypeScript**: Clean modular architecture using dependency injection, strong typing, and separation of concerns.
 - **XML to JSON Transformation Engine**: High-performance parsing using `fast-xml-parser` with defensive handling of single vs multi-node XML lists, empty responses, and XML entities.
 - **Unified Schema Compliance**: Transforms disparate NHTSA endpoints into the exact unified JSON specification.
-- **Relational Persistence**: Uses TypeORM with `better-sqlite3` for zero-configuration, lightning-fast persistence with relational integrity and cascade updates.
+- **Relational Persistence**: Uses TypeORM with PostgreSQL (`pg`) for enterprise-grade, ACID-compliant persistence with connection pooling, relational integrity, and cascade updates.
+- **In-Memory Testing Suite**: Uses `pg-mem` for zero-configuration, lightning-fast in-memory unit and integration test execution without external database dependencies.
+- **BullMQ & Redis Task Queue**: Asynchronous queue processing using `@nestjs/bullmq` backed by Redis, with rate limiting (`limiter: { max: 10, duration: 1000 }`), concurrency lock, and live job progress tracking.
 - **Concurrent Ingestion Pool**: Controlled worker pool with configurable concurrency, batch slicing, timeout controls, and exponential backoff retries.
 - **Typed GraphQL API**: Code-first Apollo GraphQL endpoint with rich docstrings, pagination, full-text search, and on-demand ingestion mutation.
 - **Structured JSON Logging**: Enterprise-grade structured JSON logs (powered by Pino) capturing startup, shutdowns, API failures, and transformation diagnostics.
@@ -99,35 +109,46 @@ sequenceDiagram
     actor Client as User / GraphQL Client
     participant Resolver as VehiclesResolver
     participant Ingestion as IngestionService
+    participant BullMQ as BullMQ (Redis Queue)
+    participant Worker as IngestionProcessor
     participant NHTSA as NHTSA Public API
     participant Parser as XmlParserService
-    participant DB as SQLite Datastore
+    participant DB as PostgreSQL Datastore
 
     Client->>Resolver: mutation { triggerIngestion(limit: 50) }
     Resolver->>Ingestion: runIngestion({ limit: 50 })
     Ingestion->>DB: Record IngestionRecord (IN_PROGRESS)
+    Ingestion->>BullMQ: Enqueue Job (ingest-makes, recordId)
+    BullMQ->>Worker: Dispatch Job (concurrency: 1, rate-limited)
     
-    Ingestion->>NHTSA: GET /getallmakes?format=XML
-    NHTSA-->>Ingestion: XML Response (12,440+ makes)
-    Ingestion->>Parser: parseMakesXml(xml)
-    Parser-->>Ingestion: Array of RawMakes
+    Worker->>NHTSA: GET /getallmakes?format=XML
+    NHTSA-->>Worker: XML Response (12,440+ makes)
+    Worker->>Parser: parseMakesXml(xml)
+    Parser-->>Worker: Array of RawMakes
 
     loop Concurrent Worker Pool (e.g. Concurrency = 10)
-        Ingestion->>NHTSA: GET /GetVehicleTypesForMakeId/{makeId}?format=xml
-        NHTSA-->>Ingestion: XML Response (Vehicle Types)
-        Ingestion->>Parser: parseVehicleTypesXml(xml)
-        Ingestion->>Parser: combineMakeWithVehicleTypes(make, types)
+        Worker->>NHTSA: GET /GetVehicleTypesForMakeId/{makeId}?format=xml
+        NHTSA-->>Worker: XML Response (Vehicle Types)
+        Worker->>Parser: parseVehicleTypesXml(xml)
+        Worker->>Parser: combineMakeWithVehicleTypes(make, types)
+        Worker->>BullMQ: updateProgress(percent)
     end
 
-    Ingestion->>DB: Atomic Transaction: Upsert Makes & VehicleTypes
-    Ingestion->>DB: Update IngestionRecord (COMPLETED, metrics)
+    Worker->>DB: Atomic Transaction: Upsert Makes & VehicleTypes
+    Worker->>DB: Update IngestionRecord (COMPLETED, metrics)
+    Worker-->>Ingestion: Job Completed (IngestionSummary)
     Ingestion-->>Resolver: IngestionRecord
     Resolver-->>Client: Result telemetry
 ```
 
 ### Ingestion Resiliency & Concurrency
 
-1. **Large Scale Optimization**: NHTSA provides over 12,000 vehicle makes. Querying every make simultaneously would result in rate limiting (HTTP 429), socket starvation, or timeouts. Our ingestion pipeline implements:
+1. **BullMQ Queue & Distributed Rate Limiting**:
+   - The queue processor (`IngestionProcessor`) runs with `concurrency: 1` to strictly serialize ingestion runs and avoid conflicting writes.
+   - Built-in token-bucket rate limiter (`limiter: { max: 10, duration: 1000 }`) prevents socket exhaustion and protects against upstream CDN/WAF rate limits (e.g., Akamai HTTP 429/403).
+   - Real-time job progress reporting via `job.updateProgress()` provides live pipeline telemetry.
+
+2. **Large Scale Optimization**: NHTSA provides over 12,000 vehicle makes. Querying every make simultaneously would result in rate limiting, socket starvation, or timeouts. Our ingestion pipeline implements:
    - A sliding **concurrency pool** (configurable via `INGESTION_CONCURRENCY`).
    - Configurable limits via `INGESTION_DEFAULT_LIMIT` (e.g., 50 for rapid testing, or `0` for complete dataset sync).
 2. **Exponential Backoff**: `NhtsaApiClient` incorporates automatic retry logic with randomized jitter on transient HTTP 5xx errors or network drops.
@@ -166,7 +187,8 @@ The transformed data adheres to the following unified JSON structure:
 
 - **Node.js**: v20.19+ or v22.12+ (Node.js 22 LTS recommended)
 - **Yarn**: v1.22+ (or npm v10+)
-- **Docker & Docker Compose** (optional, for containerized execution)
+- **Redis**: v6.2+ (or Docker Redis for BullMQ queue orchestration)
+- **Docker & Docker Compose** (recommended, runs both NestJS and Redis)
 
 ### Local Installation
 
@@ -183,7 +205,12 @@ yarn install
 
 ### Running the Application
 
+For local development, ensure Redis is running:
+
 ```bash
+# Start Redis container in the background
+docker run -d --name cars-redis -p 6379:6379 redis:7-alpine
+
 # Development mode with hot-reload
 yarn run start:dev
 
@@ -211,7 +238,7 @@ docker compose logs -f
 docker compose down
 ```
 
-The database file is persisted to `./data/vehicles.sqlite` on the host machine via Docker volume binding.
+The PostgreSQL data is persisted to a dedicated named volume (`postgres_data`) via Docker Compose.
 
 ---
 
@@ -231,9 +258,18 @@ cp .env.example .env
 | :--- | :--- | :--- | :--- |
 | `NODE_ENV` | `string` | `development` | Application environment (`development`, `production`, `test`, `staging`). |
 | `PORT` | `number` | `3000` | Port on which the HTTP server listens. |
-| `DATABASE_PATH` | `string` | `./data/vehicles.sqlite` | SQLite database file location (`:memory:` for in-memory testing). |
+| `DATABASE_HOST` | `string` | `localhost` | PostgreSQL hostname (`postgres` inside Docker). |
+| `DATABASE_PORT` | `number` | `5432` | PostgreSQL port. |
+| `DATABASE_USER` | `string` | `postgres` | PostgreSQL username. |
+| `DATABASE_PASSWORD` | `string` | `postgres` | PostgreSQL password. |
+| `DATABASE_NAME` | `string` | `cars_db` | PostgreSQL database name. |
+| `DATABASE_SSL` | `boolean` | `false` | Enable SSL encryption for PostgreSQL connection. |
+| `DATABASE_URL` | `string` | *(optional)* | Unified PostgreSQL connection URI (e.g. `postgresql://user:pass@host:5432/db`). |
 | `LOG_LEVEL` | `string` | `info` | Minimum log level (`fatal`, `error`, `warn`, `info`, `debug`, `trace`). |
 | `NHTSA_BASE_URL` | `string` | `https://vpic.nhtsa.dot.gov/api/vehicles` | NHTSA Vehicle API base URL. |
+| `REDIS_HOST` | `string` | `127.0.0.1` | Redis host for BullMQ asynchronous task queue. |
+| `REDIS_PORT` | `number` | `6379` | Redis port for BullMQ asynchronous task queue. |
+| `REDIS_PASSWORD` | `string` | *(empty)* | Optional Redis authentication password. |
 | `INGESTION_CONCURRENCY` | `number` | `10` | Maximum parallel requests during vehicle type ingestion. |
 | `INGESTION_DEFAULT_LIMIT` | `number` | `50` | Number of makes to process if no limit is specified (set `0` for all). |
 | `SYNC_ON_STARTUP` | `boolean` | `false` | Automatically trigger ingestion in the background on startup. |
@@ -408,7 +444,7 @@ yarn lint
 - **`src/transformation/xml-parser.service.spec.ts`**: Comprehensive coverage of XML parsing, polymorphic lists, empty tags, malformed syntax, and JSON transformation matching the gist shape.
 - **`src/ingestion/nhtsa-api.client.spec.ts`**: Verifies mock HTTP requests, retry logic, timeout aborts, and error handling.
 - **`src/ingestion/ingestion.service.spec.ts`**: Tests concurrent worker pool, batch persistence, duplicate run prevention, and failure tolerance.
-- **`src/database/database.spec.ts`**: Tests TypeORM entities, relations, cascading, and SQLite transactions.
+- **`src/database/database.spec.ts`**: Tests TypeORM entities, relations, cascading, and PostgreSQL transactions.
 - **`src/vehicles/vehicles.service.spec.ts` & `vehicles.resolver.spec.ts`**: Tests GraphQL queries, pagination, search, and mutations.
 - **`test/e2e-integration.spec.ts`**: Full pipeline test covering ingestion -> persistence -> GraphQL query resolution.
 

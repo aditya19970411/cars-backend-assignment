@@ -1,7 +1,14 @@
-import { Injectable, OnApplicationBootstrap } from '@nestjs/common';
+import {
+  Injectable,
+  OnApplicationBootstrap,
+  OnModuleDestroy,
+  Optional,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, DataSource } from 'typeorm';
 import { ConfigService } from '@nestjs/config';
+import { InjectQueue } from '@nestjs/bullmq';
+import { Queue, QueueEvents, Job } from 'bullmq';
 import { VehicleMake } from '../database/entities/vehicle-make.entity';
 import { VehicleType } from '../database/entities/vehicle-type.entity';
 import {
@@ -28,8 +35,11 @@ export interface IngestionSummary {
 }
 
 @Injectable()
-export class IngestionService implements OnApplicationBootstrap {
+export class IngestionService
+  implements OnApplicationBootstrap, OnModuleDestroy
+{
   private isRunning = false;
+  private queueEvents?: QueueEvents;
 
   constructor(
     @InjectRepository(VehicleMake)
@@ -43,9 +53,43 @@ export class IngestionService implements OnApplicationBootstrap {
     private readonly xmlParserService: XmlParserService,
     private readonly configService: ConfigService,
     private readonly logger: AppLogger,
+    @Optional()
+    @InjectQueue('vehicle-ingestion')
+    private readonly ingestionQueue?: Queue,
   ) {}
 
+  private getQueueEvents(): QueueEvents {
+    if (!this.queueEvents) {
+      const host = this.configService.get<string>('redis.host') || '127.0.0.1';
+      const port = this.configService.get<number>('redis.port') || 6379;
+      const password =
+        this.configService.get<string>('redis.password') || undefined;
+
+      this.queueEvents = new QueueEvents('vehicle-ingestion', {
+        connection: { host, port, password },
+      });
+    }
+    return this.queueEvents;
+  }
+
+  async onModuleDestroy(): Promise<void> {
+    if (this.queueEvents) {
+      await this.queueEvents.close().catch(() => {});
+      this.queueEvents = undefined;
+    }
+  }
+
   async onApplicationBootstrap(): Promise<void> {
+    // Clean up any stale in-progress records left by previous interrupted runs/restarts
+    await this.ingestionRecordRepository.update(
+      { status: IngestionStatus.IN_PROGRESS },
+      {
+        status: IngestionStatus.FAILED,
+        errorMessage: 'Job interrupted by application restart',
+        completedAt: new Date(),
+      },
+    );
+
     const syncOnStartup = this.configService.get<boolean>(
       'ingestion.syncOnStartup',
     );
@@ -86,24 +130,104 @@ export class IngestionService implements OnApplicationBootstrap {
   }
 
   /**
-   * Orchestrates the complete XML pull -> transform -> persist pipeline
+   * Orchestrates the complete XML pull -> transform -> persist pipeline.
+   * If BullMQ queue is available, dispatches as an asynchronous queued job.
    */
   async runIngestion(options?: IngestionOptions): Promise<IngestionSummary> {
     if (this.isRunning) {
       throw new Error('An ingestion job is already in progress');
     }
 
+    // If BullMQ is wired up, delegate execution through the queue
+    if (this.ingestionQueue) {
+      const activeCount = await this.ingestionQueue
+        .getActiveCount()
+        .catch(() => 0);
+      const waitingCount = await this.ingestionQueue
+        .getWaitingCount()
+        .catch(() => 0);
+      if (activeCount > 0 || waitingCount > 0) {
+        throw new Error('An ingestion job is already in progress');
+      }
+
+      this.isRunning = true;
+      const record = this.ingestionRecordRepository.create({
+        status: IngestionStatus.IN_PROGRESS,
+        totalMakes: 0,
+        processedMakes: 0,
+        failedMakes: 0,
+        startedAt: new Date(),
+      });
+      const savedRecord = await this.ingestionRecordRepository.save(record);
+
+      try {
+        const job = await this.ingestionQueue.add(
+          'ingest-makes',
+          {
+            recordId: savedRecord.id,
+            limit: options?.limit,
+            offset: options?.offset,
+          },
+          {
+            jobId: `ingestion-${savedRecord.id}`,
+            removeOnComplete: true,
+            removeOnFail: false,
+          },
+        );
+
+        const queueEvents = this.getQueueEvents();
+        const result = (await job.waitUntilFinished(
+          queueEvents,
+        )) as IngestionSummary;
+        return result;
+      } catch (error) {
+        throw error;
+      } finally {
+        this.isRunning = false;
+      }
+    }
+
+    // Direct in-process execution fallback
+    return this.executeIngestionPipeline(options);
+  }
+
+  /**
+   * Core ingestion pipeline executed by BullMQ Worker (or directly when queue is omitted)
+   */
+  async executeIngestionPipeline(
+    options?: IngestionOptions & { recordId?: number },
+    job?: Job,
+  ): Promise<IngestionSummary> {
     this.isRunning = true;
     const startTime = Date.now();
 
-    const record = this.ingestionRecordRepository.create({
-      status: IngestionStatus.IN_PROGRESS,
-      totalMakes: 0,
-      processedMakes: 0,
-      failedMakes: 0,
-      startedAt: new Date(),
-    });
-    const savedRecord = await this.ingestionRecordRepository.save(record);
+    let savedRecord: IngestionRecord;
+    if (options?.recordId) {
+      const existing = await this.ingestionRecordRepository.findOne({
+        where: { id: options.recordId },
+      });
+      if (existing) {
+        savedRecord = existing;
+      } else {
+        const record = this.ingestionRecordRepository.create({
+          status: IngestionStatus.IN_PROGRESS,
+          totalMakes: 0,
+          processedMakes: 0,
+          failedMakes: 0,
+          startedAt: new Date(),
+        });
+        savedRecord = await this.ingestionRecordRepository.save(record);
+      }
+    } else {
+      const record = this.ingestionRecordRepository.create({
+        status: IngestionStatus.IN_PROGRESS,
+        totalMakes: 0,
+        processedMakes: 0,
+        failedMakes: 0,
+        startedAt: new Date(),
+      });
+      savedRecord = await this.ingestionRecordRepository.save(record);
+    }
 
     try {
       this.logger.log('Starting ingestion pipeline: pulling all makes XML...');
@@ -161,6 +285,14 @@ export class IngestionService implements OnApplicationBootstrap {
           transformedMakes.push(
             this.xmlParserService.combineMakeWithVehicleTypes(make, []),
           );
+        }
+
+        // Live progress update to BullMQ job if running within a worker
+        if (job && makesToProcess.length > 0) {
+          const progressPercent = Math.round(
+            ((processedCount + failedCount) / makesToProcess.length) * 100,
+          );
+          await job.updateProgress(progressPercent).catch(() => {});
         }
       };
 

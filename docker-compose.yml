@@ -1,6 +1,38 @@
 version: '3.8'
 
 services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: cars_backend_postgres
+    restart: unless-stopped
+    ports:
+      - '5432:5432'
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: cars_db
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U postgres -d cars_db']
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: cars_backend_redis
+    restart: unless-stopped
+    ports:
+      - '${REDIS_HOST_PORT:-6380}:6379'
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
   cars-backend:
     build:
       context: .
@@ -8,18 +40,32 @@ services:
     image: cars-backend-challenge:latest
     container_name: cars_backend_service
     restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     ports:
       - '3000:3000'
     environment:
       - NODE_ENV=production
       - PORT=3000
-      - DATABASE_PATH=/usr/src/app/data/vehicles.sqlite
+      - DATABASE_HOST=postgres
+      - DATABASE_PORT=5432
+      - DATABASE_USER=postgres
+      - DATABASE_PASSWORD=postgres
+      - DATABASE_NAME=cars_db
+      - DATABASE_SSL=false
       - LOG_LEVEL=info
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
       - NHTSA_BASE_URL=https://vpic.nhtsa.dot.gov/api/vehicles
       - INGESTION_CONCURRENCY=10
       - INGESTION_DEFAULT_LIMIT=50
       - SYNC_ON_STARTUP=true
       - EXTERNAL_API_TIMEOUT_MS=15000
       - EXTERNAL_API_MAX_RETRIES=3
-    volumes:
-      - ./data:/usr/src/app/data
+
+volumes:
+  postgres_data:
+  redis_data:

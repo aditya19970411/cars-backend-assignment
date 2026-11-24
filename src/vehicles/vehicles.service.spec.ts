@@ -2,6 +2,7 @@ import { DataSource, Repository } from 'typeorm';
 import { VehiclesService } from './vehicles.service';
 import { VehicleMake } from '../database/entities/vehicle-make.entity';
 import { VehicleType } from '../database/entities/vehicle-type.entity';
+import { createTestDatabase } from '../../test/test-utils/test-database';
 
 describe('VehiclesService', () => {
   let service: VehiclesService;
@@ -10,14 +11,7 @@ describe('VehiclesService', () => {
   let typeRepo: Repository<VehicleType>;
 
   beforeAll(async () => {
-    dataSource = new DataSource({
-      type: 'better-sqlite3',
-      database: ':memory:',
-      entities: [VehicleMake, VehicleType],
-      synchronize: true,
-      logging: false,
-    });
-    await dataSource.initialize();
+    dataSource = await createTestDatabase();
     makeRepo = dataSource.getRepository(VehicleMake);
     typeRepo = dataSource.getRepository(VehicleType);
     service = new VehiclesService(makeRepo, typeRepo);
@@ -30,8 +24,8 @@ describe('VehiclesService', () => {
   });
 
   beforeEach(async () => {
-    await typeRepo.clear();
-    await makeRepo.clear();
+    await dataSource.query('DELETE FROM vehicle_types;');
+    await dataSource.query('DELETE FROM vehicle_makes;');
 
     const make1 = makeRepo.create({
       makeId: '440',

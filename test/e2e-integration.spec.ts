@@ -2,6 +2,7 @@ import { jest } from '@jest/globals';
 import { Test, TestingModule } from '@nestjs/testing';
 import { ConfigModule } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
+import { getQueueToken } from '@nestjs/bullmq';
 import { VehicleMake } from '../src/database/entities/vehicle-make.entity';
 import { VehicleType } from '../src/database/entities/vehicle-type.entity';
 import { IngestionRecord } from '../src/database/entities/ingestion-record.entity';
@@ -12,6 +13,7 @@ import { LoggerModule } from '../src/logger/logger.module';
 import { NhtsaApiClient } from '../src/ingestion/nhtsa-api.client';
 import { IngestionService } from '../src/ingestion/ingestion.service';
 import { VehiclesResolver } from '../src/graphql/resolvers/vehicles.resolver';
+import { createTestDatabase } from './test-utils/test-database';
 
 describe('E2E Data Pipeline: Ingestion -> Persistence -> GraphQL Serving', () => {
   let moduleRef: TestingModule;
@@ -98,7 +100,14 @@ describe('E2E Data Pipeline: Ingestion -> Persistence -> GraphQL Serving', () =>
           load: [
             () => ({
               env: 'test',
-              database: { path: ':memory:' },
+              database: {
+                host: 'localhost',
+                port: 5432,
+                user: 'postgres',
+                password: 'postgres',
+                name: 'cars_db_test',
+                ssl: false,
+              },
               ingestion: {
                 concurrency: 2,
                 defaultLimit: 10,
@@ -108,12 +117,13 @@ describe('E2E Data Pipeline: Ingestion -> Persistence -> GraphQL Serving', () =>
           ],
         }),
         LoggerModule,
-        TypeOrmModule.forRoot({
-          type: 'better-sqlite3',
-          database: ':memory:',
-          entities: [VehicleMake, VehicleType, IngestionRecord],
-          synchronize: true,
-          logging: false,
+        TypeOrmModule.forRootAsync({
+          useFactory: () => ({
+            type: 'postgres',
+            entities: [VehicleMake, VehicleType, IngestionRecord],
+            synchronize: true,
+          }),
+          dataSourceFactory: async () => createTestDatabase(),
         }),
         TransformationModule,
         IngestionModule,
@@ -122,6 +132,8 @@ describe('E2E Data Pipeline: Ingestion -> Persistence -> GraphQL Serving', () =>
     })
       .overrideProvider(NhtsaApiClient)
       .useValue(nhtsaClientMock)
+      .overrideProvider(getQueueToken('vehicle-ingestion'))
+      .useValue(null)
       .compile();
 
     ingestionService = moduleRef.get(IngestionService);

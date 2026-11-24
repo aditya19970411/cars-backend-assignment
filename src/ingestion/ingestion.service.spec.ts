@@ -11,6 +11,7 @@ import {
   IngestionRecord,
   IngestionStatus,
 } from '../database/entities/ingestion-record.entity';
+import { createTestDatabase } from '../../test/test-utils/test-database';
 
 describe('IngestionService', () => {
   let service: IngestionService;
@@ -24,14 +25,7 @@ describe('IngestionService', () => {
   let loggerMock: jest.Mocked<AppLogger>;
 
   beforeAll(async () => {
-    dataSource = new DataSource({
-      type: 'better-sqlite3',
-      database: ':memory:',
-      entities: [VehicleMake, VehicleType, IngestionRecord],
-      synchronize: true,
-      logging: false,
-    });
-    await dataSource.initialize();
+    dataSource = await createTestDatabase();
     makeRepo = dataSource.getRepository(VehicleMake);
     typeRepo = dataSource.getRepository(VehicleType);
     recordRepo = dataSource.getRepository(IngestionRecord);
@@ -44,9 +38,9 @@ describe('IngestionService', () => {
   });
 
   beforeEach(async () => {
-    await typeRepo.clear();
-    await makeRepo.clear();
-    await recordRepo.clear();
+    await dataSource.query('DELETE FROM vehicle_types;');
+    await dataSource.query('DELETE FROM vehicle_makes;');
+    await dataSource.query('DELETE FROM ingestion_records;');
 
     loggerMock = {
       log: jest.fn(),

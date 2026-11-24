@@ -1,23 +1,16 @@
 import { DataSource } from 'typeorm';
 import { VehicleMake } from './entities/vehicle-make.entity';
-import { VehicleType } from './entities/vehicle-type.entity';
 import {
   IngestionRecord,
   IngestionStatus,
 } from './entities/ingestion-record.entity';
+import { createTestDatabase } from '../../test/test-utils/test-database';
 
 describe('Database Entities and Repositories', () => {
   let dataSource: DataSource;
 
   beforeAll(async () => {
-    dataSource = new DataSource({
-      type: 'better-sqlite3',
-      database: ':memory:',
-      entities: [VehicleMake, VehicleType, IngestionRecord],
-      synchronize: true,
-      logging: false,
-    });
-    await dataSource.initialize();
+    dataSource = await createTestDatabase();
   });
 
   afterAll(async () => {
@@ -27,9 +20,9 @@ describe('Database Entities and Repositories', () => {
   });
 
   beforeEach(async () => {
-    await dataSource.getRepository(VehicleType).clear();
-    await dataSource.getRepository(VehicleMake).clear();
-    await dataSource.getRepository(IngestionRecord).clear();
+    await dataSource.query('DELETE FROM vehicle_types;');
+    await dataSource.query('DELETE FROM vehicle_makes;');
+    await dataSource.query('DELETE FROM ingestion_records;');
   });
 
   it('should persist a VehicleMake with associated VehicleTypes', async () => {

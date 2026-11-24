@@ -1,0 +1,123 @@
+# ------------------------------------------------------
+# THIS FILE WAS AUTOMATICALLY GENERATED (DO NOT MODIFY)
+# ------------------------------------------------------
+
+"""
+A date-time string at UTC, such as 2019-12-03T09:54:33Z, compliant with the date-time format.
+"""
+scalar DateTime
+
+"""Status and telemetry of a vehicle data ingestion run"""
+type IngestionRecord {
+  """Timestamp when ingestion completed"""
+  completedAt: DateTime
+  createdAt: DateTime!
+
+  """Error message if ingestion failed"""
+  errorMessage: String
+
+  """Number of failed makes during ingestion"""
+  failedMakes: Int!
+  id: ID!
+
+  """Number of successfully processed makes"""
+  processedMakes: Int!
+
+  """Timestamp when ingestion started"""
+  startedAt: DateTime
+
+  """Ingestion status (IDLE, IN_PROGRESS, COMPLETED, FAILED)"""
+  status: String!
+
+  """Total number of makes to be processed"""
+  totalMakes: Int!
+  updatedAt: DateTime!
+}
+
+type Mutation {
+  """
+  Triggers the NHTSA XML data ingestion pipeline on-demand, fetching, transforming, and persisting vehicle data.
+  """
+  triggerIngestion(
+    """Optional number of makes to ingest (overrides default batch limit)"""
+    limit: Int
+  ): IngestionRecord!
+}
+
+type Query {
+  """Returns the status and telemetry of the latest data ingestion run."""
+  ingestionStatus: IngestionRecord!
+
+  """Fetches a single vehicle make with its vehicle types by makeId."""
+  make(
+    """The unique Make ID"""
+    makeId: String!
+  ): VehicleMake
+
+  """
+  Fetches vehicle makes with their associated vehicle types matching the target unified JSON structure. Supports pagination and search.
+  """
+  makes(
+    """Maximum number of vehicle makes to return (pagination)"""
+    limit: Int = 50
+
+    """Number of vehicle makes to skip (pagination offset)"""
+    offset: Int = 0
+
+    """Optional case-insensitive search filter for makeName or makeId"""
+    search: String
+  ): [VehicleMake!]!
+
+  """Fetches vehicle types, optionally filtered by makeId or type name."""
+  vehicleTypes(
+    """Maximum number of vehicle types to return"""
+    limit: Int = 100
+
+    """Filter vehicle types by specific Make ID"""
+    makeId: String
+
+    """Optional filter by vehicle type name"""
+    search: String
+
+    """Filter vehicle types by specific Type ID (e.g. "1", "2")"""
+    typeId: String
+  ): [VehicleType!]!
+}
+
+"""Vehicle Make entity representing an automotive manufacturer"""
+type VehicleMake {
+  """Record creation timestamp"""
+  createdAt: DateTime!
+
+  """Unique identifier for the vehicle make"""
+  makeId: ID!
+
+  """Name of the vehicle make"""
+  makeName: String!
+
+  """Record last update timestamp"""
+  updatedAt: DateTime!
+
+  """List of vehicle types produced by this make"""
+  vehicleTypes: [VehicleType!]!
+}
+
+"""
+Vehicle Type entity representing a classification of vehicle (e.g., Passenger Car, Truck)
+"""
+type VehicleType {
+  """Record creation timestamp"""
+  createdAt: DateTime!
+
+  """Associated Make ID"""
+  makeId: String!
+
+  """Unique identifier for the vehicle type"""
+  typeId: ID!
+
+  """Name of the vehicle type"""
+  typeName: String!
+
+  """Record last update timestamp"""
+  updatedAt: DateTime!
+}

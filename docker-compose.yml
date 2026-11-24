@@ -1,0 +1,25 @@
+version: '3.8'
+
+services:
+  cars-backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: cars-backend-challenge:latest
+    container_name: cars_backend_service
+    restart: unless-stopped
+    ports:
+      - '3000:3000'
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      - DATABASE_PATH=/usr/src/app/data/vehicles.sqlite
+      - LOG_LEVEL=info
+      - NHTSA_BASE_URL=https://vpic.nhtsa.dot.gov/api/vehicles
+      - INGESTION_CONCURRENCY=10
+      - INGESTION_DEFAULT_LIMIT=50
+      - SYNC_ON_STARTUP=true
+      - EXTERNAL_API_TIMEOUT_MS=15000
+      - EXTERNAL_API_MAX_RETRIES=3
+    volumes:
+      - ./data:/usr/src/app/data

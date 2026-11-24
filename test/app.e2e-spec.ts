@@ -3,6 +3,8 @@ import { INestApplication } from '@nestjs/common';
 import request from 'supertest';
 import { App } from 'supertest/types';
 import { AppModule } from './../src/app.module';
+import { DatabaseModule } from './../src/database/database.module';
+import { TestDatabaseModule } from './test-utils/test-database.module';
 import { getQueueToken } from '@nestjs/bullmq';
 import { IngestionProcessor } from './../src/ingestion/ingestion.processor';
 import { IngestionService } from './../src/ingestion/ingestion.service';
@@ -15,6 +17,8 @@ describe('AppController (e2e)', () => {
     const moduleFixture: TestingModule = await Test.createTestingModule({
       imports: [AppModule],
     })
+      .overrideModule(DatabaseModule)
+      .useModule(TestDatabaseModule)
       .overrideProvider(IngestionService)
       .useValue({
         onApplicationBootstrap: () => Promise.resolve(),

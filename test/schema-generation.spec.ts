@@ -2,6 +2,8 @@ import { jest } from '@jest/globals';
 import { Test } from '@nestjs/testing';
 import { getQueueToken } from '@nestjs/bullmq';
 import { AppModule } from '../src/app.module';
+import { DatabaseModule } from '../src/database/database.module';
+import { TestDatabaseModule } from './test-utils/test-database.module';
 import { IngestionService } from '../src/ingestion/ingestion.service';
 import { IngestionProcessor } from '../src/ingestion/ingestion.processor';
 import * as fs from 'fs';
@@ -15,6 +17,8 @@ describe('GraphQL Schema Generation', () => {
     const moduleRef = await Test.createTestingModule({
       imports: [AppModule],
     })
+      .overrideModule(DatabaseModule)
+      .useModule(TestDatabaseModule)
       .overrideProvider(IngestionService)
       .useValue({
         onApplicationBootstrap: jest.fn(),
